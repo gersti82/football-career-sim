@@ -1,99 +1,28 @@
-// v0.10.1 LONG-TERM TEST LAYER
+// v0.10.2 LONG-TERM TEST LAYER
 // Additive only: preserves protected v0.9.1 gameplay formulas.
-// Fixes season archive duplication, season progression and cross-season scouting/interest continuity.
+// Uses OpenFootball generated JSON to avoid text-format changes between seasons.
 
 const LONGTERM_SEASONS=['2016-17','2017-18','2018-19','2019-20','2020-21','2021-22','2022-23','2023-24','2024-25'];
 const LT_ALIAS={
  'Bayern München':'Bayern Munich','Bayern Munich':'Bayern Munich','RB Leipzig':'RB Leipzig','Borussia Dortmund':'Borussia Dortmund','1899 Hoffenheim':'Hoffenheim','TSG 1899 Hoffenheim':'Hoffenheim','Hoffenheim':'Hoffenheim','1. FC Köln':'FC Cologne','FC Köln':'FC Cologne','Hertha BSC':'Hertha Berlin','Hertha Berlin':'Hertha Berlin','SC Freiburg':'Freiburg','Freiburg':'Freiburg','Werder Bremen':'Werder Bremen','Bor. Mönchengladbach':'Borussia Monchengladbach','Borussia Mönchengladbach':'Borussia Monchengladbach','Borussia Monchengladbach':'Borussia Monchengladbach','FC Schalke 04':'Schalke 04','Schalke 04':'Schalke 04','Eintracht Frankfurt':'Eintracht Frankfurt','Bayer Leverkusen':'Bayer Leverkusen','FC Augsburg':'Augsburg','Augsburg':'Augsburg','Hamburger SV':'Hamburg','Hamburg':'Hamburg','1. FSV Mainz 05':'Mainz 05','Mainz 05':'Mainz 05','VfL Wolfsburg':'Wolfsburg','Wolfsburg':'Wolfsburg','FC Ingolstadt 04':'Ingolstadt','Ingolstadt':'Ingolstadt','SV Darmstadt 98':'Darmstadt 98','Darmstadt 98':'Darmstadt 98',
  'VfB Stuttgart':'Stuttgart','Stuttgart':'Stuttgart','Hannover 96':'Hannover 96','Fortuna Düsseldorf':'Fortuna Dusseldorf','Fortuna Düsseldorf 1895':'Fortuna Dusseldorf','Fortuna Dusseldorf':'Fortuna Dusseldorf','1. FC Nürnberg':'Nurnberg','Nürnberg':'Nurnberg','Nurnberg':'Nurnberg','SC Paderborn 07':'Paderborn','Paderborn':'Paderborn','1. FC Union Berlin':'Union Berlin','Union Berlin':'Union Berlin','Arminia Bielefeld':'Arminia Bielefeld','VfL Bochum':'Bochum','Bochum':'Bochum','SpVgg Greuther Fürth':'Greuther Furth','Greuther Fürth':'Greuther Furth','Greuther Furth':'Greuther Furth','Holstein Kiel':'Holstein Kiel','1. FC Heidenheim':'Heidenheim','1. FC Heidenheim 1846':'Heidenheim','Heidenheim':'Heidenheim','FC St. Pauli':'St. Pauli','St. Pauli':'St. Pauli'
 };
-const LT_CLUB_DEFAULT=[72,68,65,76];
-let LT_CACHE={};
+const LT_CLUB_DEFAULT=[72,68,65,76];let LT_CACHE={};
 function ltClub(name){if(!CLUBS[name])CLUBS[name]=LT_CLUB_DEFAULT.slice();return CLUBS[name];}
-function ltParse(t){let md=0,o=[];for(const raw of t.split(/\r?\n/)){const z=raw.match(/Matchday\s+(\d+)/i);if(z){md=+z[1];continue}const x=raw.match(/^\s*(?:\w{3}\s+\w{3}\s+\d{1,2}\s+)?(?:\d{1,2}:\d{2}\s+)?(.+?)\s{2,}v\s+(.+?)\s{2,}(\d+)-(\d+)(?:\s|$)/);if(x){const h=LT_ALIAS[x[1].trim()]||x[1].trim(),a=LT_ALIAS[x[2].trim()]||x[2].trim();o.push({md,home:h,away:a,hg:+x[3],ag:+x[4]});}}return o;}
-async function ltLoadSeason(season){if(LT_CACHE[season])return LT_CACHE[season];const u='https://raw.githubusercontent.com/openfootball/deutschland/master/'+season+'/1-bundesliga.txt';const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw Error('Could not load '+season);const fx=ltParse(await r.text());if(fx.length<300)throw Error(season+' parsed only '+fx.length+' fixtures');LT_CACHE[season]=fx;return fx;}
+async function ltLoadSeason(season){
+  if(LT_CACHE[season])return LT_CACHE[season];
+  const u='https://raw.githubusercontent.com/openfootball/football.json/master/'+season+'/de.1.json';
+  const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw Error('Could not load '+season+' ('+r.status+')');
+  const j=await r.json(),fx=(j.matches||[]).map((m,i)=>{const sc=m.score?.ft||m.score;return {md:parseInt(String(m.round||'').match(/\d+/)?.[0]||Math.floor(i/9)+1),home:LT_ALIAS[m.team1]||m.team1,away:LT_ALIAS[m.team2]||m.team2,hg:+sc[0],ag:+sc[1]};}).filter(f=>Number.isFinite(f.hg)&&Number.isFinite(f.ag));
+  if(fx.length!==306)throw Error(season+' loaded '+fx.length+' fixtures; expected 306');LT_CACHE[season]=fx;return fx;
+}
 function ltResetTeam(){S.team={p:0,w:0,d:0,l:0,gf:0,ga:0,pts:0};}
 function ltSeasonMarkers(){S.seasonAppsStart=S.apps;S.seasonMinsStart=S.mins;S.seasonGoalsStart=S.goals;S.seasonAssistsStart=S.assists;S.seasonGradeStart=S.grades.length;}
-function ltArchiveSeason(){
-  if(!S.seasonHistory)S.seasonHistory=[];
-  const label=S.seasonLabel||'2016-17';
-  // Idempotent: a season can only be archived once.
-  if(S.seasonHistory.some(x=>x.season===label))return;
-  const grades=S.grades.slice(S.seasonGradeStart||0);
-  S.seasonHistory.push({season:label,club:S.club,age:P.age,apps:S.apps-(S.seasonAppsStart||0),mins:S.mins-(S.seasonMinsStart||0),goals:S.goals-(S.seasonGoalsStart||0),assists:S.assists-(S.seasonAssistsStart||0),avg:grades.length?(grades.reduce((a,b)=>a+b,0)/grades.length).toFixed(2):'—',ability:ability().toFixed(1),teamPts:S.team.pts});
-}
+function ltArchiveSeason(){if(!S.seasonHistory)S.seasonHistory=[];const label=S.seasonLabel||'2016-17';if(S.seasonHistory.some(x=>x.season===label))return;const grades=S.grades.slice(S.seasonGradeStart||0);S.seasonHistory.push({season:label,club:S.club,age:P.age,apps:S.apps-(S.seasonAppsStart||0),mins:S.mins-(S.seasonMinsStart||0),goals:S.goals-(S.seasonGoalsStart||0),assists:S.assists-(S.seasonAssistsStart||0),avg:grades.length?(grades.reduce((a,b)=>a+b,0)/grades.length).toFixed(2):'—',ability:ability().toFixed(1),teamPts:S.team.pts});}
 function ltSeasonClubs(fx){return [...new Set(fx.flatMap(f=>[f.home,f.away]))];}
-function ltEnsureWorldForSeason(fx){
-  const active=ltSeasonClubs(fx);active.forEach(ltClub);
-  if(!S.perceptions)S.perceptions={};
-  active.forEach(n=>{
-    if(!S.perceptions[n])S.perceptions[n]={pot:clamp(P.pot+rn()*12,65,98),certainty:clamp(12+(P.att+P.rep)*.35,10,28),observations:0};
-    if(n!==S.club&&!S.market[n])S.market[n]={score:0,state:'Unaware',delta:0,x:0,need:clamp(55+rn()*18,20,90)};
-  });
-  return active;
-}
-function ltCarryInterest(active){
-  // Interest/scouting is career state, not season state. Keep it for clubs that remain active.
-  // Clubs outside the current Bundesliga retain memory but cool slowly instead of being deleted/reset.
-  Object.entries(S.market||{}).forEach(([n,m])=>{
-    if(!active.includes(n)){
-      const old=m.score||0;m.score=clamp(old*.88,0,100);m.delta=m.score-old;
-      m.state=m.score>=55?'Serious interest':m.score>=38?'Interested':m.score>=23?'Scouting':m.score>=10?'Monitoring':m.score>=3?'Aware':'Unaware';
-    }
-  });
-}
-async function ltNextSeason(){
-  if(!S)return false;
-  if(S._ltTransitioning)return false;
-  if(S.match<S.fx.length){alert('Finish the current season first.');return false;}
-  S._ltTransitioning=true;
-  try{
-    const current=S.seasonLabel||'2016-17';
-    const idx=LONGTERM_SEASONS.indexOf(current);
-    if(idx<0||idx>=LONGTERM_SEASONS.length-1){ltArchiveSeason();alert('Long-term historical test currently ends after 2024/25.');render();return false;}
-    // Archive BEFORE resetting anything, exactly once.
-    ltArchiveSeason();
-    const next=LONGTERM_SEASONS[idx+1];
-    const fx=await ltLoadSeason(next);
-    const active=ltEnsureWorldForSeason(fx);
-    ltCarryInterest(active);
-    P.age+=1;
-    S.seasonLabel=next;
-    // Test scaffolding for relegation: move only if current club is absent from next Bundesliga.
-    if(!active.includes(S.club)){
-      const ranked=active.map(n=>({n,s:S.market[n]?.score||0})).sort((a,b)=>b.s-a.s);
-      const newClub=ranked[0]?.n||active[Math.floor(Math.random()*active.length)];
-      S.club=newClub;S.contract={...S.contract,club:newClub};P.trust=Math.max(20,P.trust*.72);
-      if(!S.perceptions[newClub])S.perceptions[newClub]={pot:clamp(P.pot+rn()*6,65,98),certainty:55,observations:4};
-      else S.perceptions[newClub].certainty=Math.max(S.perceptions[newClub].certainty,55);
-    }
-    S.fx=fx.filter(f=>f.home===S.club||f.away===S.club);
-    if(S.fx.length!==34)throw Error(next+' has '+S.fx.length+' fixtures for '+S.club+'; expected 34');
-    S.match=0;S.hist=[];ltResetTeam();ltSeasonMarkers();
-    $('latest').innerHTML='<b>'+next+' started</b><br>'+P.name+' is now '+P.age+' · '+S.club+' · interest/scouting carried forward';
-    render();return true;
-  }catch(e){
-    console.error(e);alert('Could not start next season: '+e.message);return false;
-  }finally{S._ltTransitioning=false;}
-}
-async function ltSimYears(){
-  if(!S||S._ltBulk)return;S._ltBulk=true;
-  try{
-    for(let y=0;y<3;y++){
-      while(S.match<S.fx.length)sim();
-      const idx=LONGTERM_SEASONS.indexOf(S.seasonLabel||'2016-17');
-      if(idx>=LONGTERM_SEASONS.length-1){ltArchiveSeason();break;}
-      const ok=await ltNextSeason();if(!ok)break;
-    }
-    render();
-  }finally{S._ltBulk=false;}
-}
-const _ltSign=sign;
-sign=function(i){_ltSign(i);S.seasonLabel='2016-17';S.seasonHistory=[];S._ltTransitioning=false;S._ltBulk=false;ltSeasonMarkers();ltEnsureWorldForSeason(S.fx);render();};
-const _ltRender=render;
-render=function(){
-  _ltRender();if(!S)return;
-  const simCard=$('latest')?.parentElement;if(simCard&&!document.getElementById('ltControls')){const d=document.createElement('div');d.id='ltControls';d.innerHTML='<div class="grid"><button class="secondary" onclick="ltNextSeason()">Next season</button><button class="secondary" onclick="ltSimYears()">Sim 3 seasons</button></div><div id="ltSeason" class="muted" style="margin-top:8px"></div>';simCard.appendChild(d);}
-  if($('ltSeason'))$('ltSeason').textContent='Season '+(S.seasonLabel||'2016-17')+' · age '+P.age+' · historical Bundesliga long-term test';
-  if(S.seasonHistory?.length){$('contractTab').innerHTML += '<div class="offer"><div class="headline">Career seasons</div><div class="scroll"><table><tr><th>Season</th><th>Club</th><th>Age</th><th>Apps</th><th>Min</th><th>G/A</th><th>Note</th><th>Ability</th><th>Pts</th></tr>'+S.seasonHistory.map(x=>'<tr><td>'+x.season+'</td><td>'+x.club+'</td><td>'+x.age+'</td><td>'+x.apps+'</td><td>'+x.mins+'</td><td>'+x.goals+'/'+x.assists+'</td><td>'+x.avg+'</td><td>'+x.ability+'</td><td>'+x.teamPts+'</td></tr>').join('')+'</table></div></div>';}
-};
+function ltEnsureWorldForSeason(fx){const active=ltSeasonClubs(fx);active.forEach(ltClub);if(!S.perceptions)S.perceptions={};active.forEach(n=>{if(!S.perceptions[n])S.perceptions[n]={pot:clamp(P.pot+rn()*12,65,98),certainty:clamp(12+(P.att+P.rep)*.35,10,28),observations:0};if(n!==S.club&&!S.market[n])S.market[n]={score:0,state:'Unaware',delta:0,x:0,need:clamp(55+rn()*18,20,90)};});return active;}
+function ltCarryInterest(active){Object.entries(S.market||{}).forEach(([n,m])=>{if(!active.includes(n)){const old=m.score||0;m.score=clamp(old*.88,0,100);m.delta=m.score-old;m.state=m.score>=55?'Serious interest':m.score>=38?'Interested':m.score>=23?'Scouting':m.score>=10?'Monitoring':m.score>=3?'Aware':'Unaware';}});}
+async function ltNextSeason(){if(!S)return false;if(S._ltTransitioning)return false;if(S.match<S.fx.length){alert('Finish the current season first.');return false;}S._ltTransitioning=true;try{const current=S.seasonLabel||'2016-17',idx=LONGTERM_SEASONS.indexOf(current);if(idx<0||idx>=LONGTERM_SEASONS.length-1){ltArchiveSeason();alert('Long-term historical test currently ends after 2024/25.');render();return false;}ltArchiveSeason();const next=LONGTERM_SEASONS[idx+1],fx=await ltLoadSeason(next),active=ltEnsureWorldForSeason(fx);ltCarryInterest(active);P.age+=1;S.seasonLabel=next;if(!active.includes(S.club)){const ranked=active.map(n=>({n,s:S.market[n]?.score||0})).sort((a,b)=>b.s-a.s),newClub=ranked[0]?.n||active[Math.floor(Math.random()*active.length)];S.club=newClub;S.contract={...S.contract,club:newClub};P.trust=Math.max(20,P.trust*.72);if(!S.perceptions[newClub])S.perceptions[newClub]={pot:clamp(P.pot+rn()*6,65,98),certainty:55,observations:4};else S.perceptions[newClub].certainty=Math.max(S.perceptions[newClub].certainty,55);}S.fx=fx.filter(f=>f.home===S.club||f.away===S.club);if(S.fx.length!==34)throw Error(next+' has '+S.fx.length+' fixtures for '+S.club+'; expected 34');S.match=0;S.hist=[];ltResetTeam();ltSeasonMarkers();$('latest').innerHTML='<b>'+next+' started</b><br>'+P.name+' is now '+P.age+' · '+S.club+' · interest/scouting carried forward';render();return true;}catch(e){console.error(e);alert('Could not start next season: '+e.message);return false;}finally{S._ltTransitioning=false;}}
+async function ltSimYears(){if(!S||S._ltBulk)return;S._ltBulk=true;try{for(let y=0;y<3;y++){while(S.match<S.fx.length)sim();const idx=LONGTERM_SEASONS.indexOf(S.seasonLabel||'2016-17');if(idx>=LONGTERM_SEASONS.length-1){ltArchiveSeason();break;}const ok=await ltNextSeason();if(!ok)break;}render();}finally{S._ltBulk=false;}}
+const _ltSign=sign;sign=function(i){_ltSign(i);S.seasonLabel='2016-17';S.seasonHistory=[];S._ltTransitioning=false;S._ltBulk=false;ltSeasonMarkers();ltEnsureWorldForSeason(S.fx);render();};
+const _ltRender=render;render=function(){_ltRender();if(!S)return;const simCard=$('latest')?.parentElement;if(simCard&&!document.getElementById('ltControls')){const d=document.createElement('div');d.id='ltControls';d.innerHTML='<div class="grid"><button class="secondary" onclick="ltNextSeason()">Next season</button><button class="secondary" onclick="ltSimYears()">Sim 3 seasons</button></div><div id="ltSeason" class="muted" style="margin-top:8px"></div>';simCard.appendChild(d);}if($('ltSeason'))$('ltSeason').textContent='Season '+(S.seasonLabel||'2016-17')+' · age '+P.age+' · historical Bundesliga long-term test';if(S.seasonHistory?.length){$('contractTab').innerHTML += '<div class="offer"><div class="headline">Career seasons</div><div class="scroll"><table><tr><th>Season</th><th>Club</th><th>Age</th><th>Apps</th><th>Min</th><th>G/A</th><th>Note</th><th>Ability</th><th>Pts</th></tr>'+S.seasonHistory.map(x=>'<tr><td>'+x.season+'</td><td>'+x.club+'</td><td>'+x.age+'</td><td>'+x.apps+'</td><td>'+x.mins+'</td><td>'+x.goals+'/'+x.assists+'</td><td>'+x.avg+'</td><td>'+x.ability+'</td><td>'+x.teamPts+'</td></tr>').join('')+'</table></div></div>';}};
