@@ -1,5 +1,6 @@
-// v0.9.1 calibration layer: club-specific scouting knowledge + role opportunity rebalance.
-// Keeps the stable 0.8.2 fixture/match/team UI intact.
+// v0.9.1 STABLE calibration layer: club-specific scouting knowledge + role opportunity rebalance.
+// IMPORTANT: gameplay formulas in this file are now the protected baseline until explicitly changed.
+// The original 0.8.2 fixture/match/team UI remains the frozen base.
 
 function initClubPerceptions(){
   if(!P||!S)return;
@@ -9,29 +10,21 @@ function initClubPerceptions(){
     const own=n===S.club;
     const baseCert=own?62:clamp(12+(P.att+P.rep)*.45+Math.max(0,c[2]-70)*.08,10,30);
     const sigma=own?5.5:12;
-    S.perceptions[n]={
-      pot:clamp(P.pot+rn()*sigma,65,98),
-      certainty:baseCert,
-      observations:own?6:0
-    };
+    S.perceptions[n]={pot:clamp(P.pot+rn()*sigma,65,98),certainty:baseCert,observations:own?6:0};
   });
 }
 function ownPerception(){initClubPerceptions();return S.perceptions[S.club]}
 function observePotential(club,weight,signal){
   initClubPerceptions();
-  const p=S.perceptions[club];
-  if(!p)return;
+  const p=S.perceptions[club];if(!p)return;
   const w=clamp(weight,0,1);
   const noisyEvidence=clamp(P.pot+rn()*(13-p.certainty*.09),65,98);
-  // Evidence can move estimates both directions. Strong performances mostly increase attention/certainty,
-  // not magically true potential; only a small performance signal nudges the estimate.
   const target=clamp(noisyEvidence+(signal||0)*.12,65,98);
   p.pot=clamp(p.pot*(1-w)+target*w,65,98);
   p.certainty=clamp(p.certainty+3+12*w,5,95);
   p.observations++;
 }
 
-// Trust is driven by performance against role expectation. Events already affect the Kicker grade.
 function roleTrustDelta(grade,g,as,played,ctx,clean){
   if(!played)return 0;
   const r=ROLE[S.contract.role];
@@ -42,8 +35,6 @@ function roleTrustDelta(grade,g,as,played,ctx,clean){
   return (vsExpectation+excellent+defensive)*context;
 }
 
-// Selection: the manager uses the CURRENT CLUB'S own estimate, not true potential.
-// Rotation prospect is now materially different from development prospect.
 function selectionChance(c,r){
   const pp=ownPerception();
   const gap=ability()-c[1];
@@ -61,7 +52,6 @@ function selectionChance(c,r){
   return {chance:clamp(raw,floor,88),raw,abilityTerm,trustTerm,formTerm,roleTerm,youth,perceivedPot:pp.pot,certainty:pp.certainty};
 }
 
-// Each external club owns a different estimate and certainty. Interest can rise or fall.
 function market(grade,g,as,c,ctx,clean){
   initClubPerceptions();
   const played=grade!=null;
@@ -70,8 +60,6 @@ function market(grade,g,as,c,ctx,clean){
   const event=played?(g*2.0+as*.8+(((P.pos==='GK'||P.pos==='CB')&&clean)?.8:0)):0;
   const visibility=P.att*.10+P.rep*.13+c[2]*.035;
   const recent=(perf+standout+event)*clamp(.9+(ctx.mult-1)*.5,.82,1.18);
-
-  // Own club sees training every week, so its estimate gets steadily more certain.
   observePotential(S.club,.08,(P.form-50)*.05);
 
   Object.entries(CLUBS).forEach(([n,cc])=>{
@@ -96,7 +84,6 @@ function market(grade,g,as,c,ctx,clean){
     }
     const score=clamp(old+delta,0,100);
     const state=score>=55?'Serious interest':score>=38?'Interested':score>=23?'Scouting':score>=10?'Monitoring':score>=3?'Aware':'Unaware';
-    // Clubs only learn when there is actual visibility/scouting. Better interest means more observation.
     if(played&&noticed){
       const scoutWeight=state==='Serious interest'?.22:state==='Interested'?.16:state==='Scouting'?.11:state==='Monitoring'?.065:.035;
       observePotential(n,scoutWeight,perf+standout);
@@ -105,15 +92,9 @@ function market(grade,g,as,c,ctx,clean){
   });
 }
 
-// Initialise perceptions only after signing, because there is no current club before that point.
 const _v082Sign=sign;
-sign=function(i){
-  _v082Sign(i);
-  initClubPerceptions();
-  render();
-};
+sign=function(i){_v082Sign(i);initClubPerceptions();render();};
 
-// Debug: true potential plus current club's estimate. External club estimates are in Interest Debug.
 const _v082Snap=snap;
 snap=function(){
   const x=_v082Snap();
@@ -121,12 +102,23 @@ snap=function(){
   return x;
 };
 
-// Add club-specific potential/certainty to Interest Debug without touching match/team output.
+// UI extension only. It MUST preserve the original season stats and only add the club profile below them.
 const _v082Render=render;
 render=function(){
   _v082Render();
   if(!S)return;
   initClubPerceptions();
+
+  const c=CLUBS[S.club];
+  const originalTeamStats=$('teamTab').innerHTML;
+  $('teamTab').innerHTML=originalTeamStats+
+    '<div class="offer"><div class="headline">Club profile</div><p class="muted">These are the current prototype club ratings used by the simulation.</p><div class="stats">'+
+    '<div class="stat"><b>'+c[0]+'</b><span>Development</span></div>'+
+    '<div class="stat"><b>'+c[1]+'</b><span>Squad strength</span></div>'+
+    '<div class="stat"><b>'+c[2]+'</b><span>Prestige / attention</span></div>'+
+    '<div class="stat"><b>'+c[3]+'</b><span>Youth policy</span></div>'+
+    '</div></div>';
+
   const mk=Object.entries(S.market).sort((a,b)=>b[1].score-a[1].score);
   $('marketTab').innerHTML='<p class="muted">Each club has its own potential estimate. Pot = perceived potential; Cert = confidence in that estimate. True potential remains debug-only.</p>'+(mk.length?'<div class="scroll"><table><tr><th>Club</th><th>Score</th><th>Δ</th><th>State</th><th>Pot</th><th>Cert</th><th>Trigger</th></tr>'+mk.map(([n,v])=>'<tr><td>'+n+'</td><td>'+v.score.toFixed(1)+'</td><td>'+dh(v.delta)+'</td><td>'+v.state+'</td><td>'+(v.scoutPot??S.perceptions[n].pot).toFixed(1)+'</td><td>'+(v.certainty??S.perceptions[n].certainty).toFixed(0)+'%</td><td>'+v.x.toFixed(1)+'</td></tr>').join('')+'</table></div>':'<p class="muted">No external club has accumulated interest yet.</p>');
 };
