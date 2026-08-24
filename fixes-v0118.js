@@ -1,0 +1,92 @@
+// v0.11.8 — player development model + test setup controls.
+// Adds professionalism, potential-headroom training, temporary effective ability,
+// and editable player values for systematic testing. Existing base ability() remains underlying ability.
+
+function v118Professionalism(){return clamp(Number(P?.professionalism??50),1,100);}
+function v118EffectiveAbility(){
+  if(!P)return 0;
+  const base=ability();
+  // Temporary over-performance is allowed above true potential. It does NOT permanently raise attributes.
+  const form=clamp((P.form-50)*.075,-3.75,3.75);
+  const trust=clamp((P.trust-50)*.045,-2.25,2.25);
+  const confidence=clamp(Number(P.confidence??50)-50,-50,50)*.035;
+  return clamp(base+form+trust+confidence,1,100);
+}
+function v118Headroom(){
+  const a=ability(),pot=Number(P.pot||a);
+  // Development slows progressively near potential but never becomes a mathematical brick wall.
+  return clamp(.10+Math.max(0,pot-a)/24,.10,1.15);
+}
+function v118ProfFactor(){return clamp(.62+v118Professionalism()*.0076,.63,1.38);}
+function v118AgeTraining(){return P.age<=18?1.28:P.age<=21?1.12:P.age<=24?.96:P.age<=27?.78:.58;}
+
+// Add professionalism/headroom to the increment already produced by the current development system.
+const _v118Sim=sim;
+sim=function(){
+  if(!P||!S)return _v118Sim();
+  const bt=P.t,bp=P.ph,bm=P.m,beforeHist=S.hist?.length||0,preTrust=P.trust;
+  const out=_v118Sim();
+  if(!S.hist||S.hist.length<=beforeHist)return out;
+  const h=S.hist[S.hist.length-1];
+  const dt=P.t-bt,dp=P.ph-bp,dm=P.m-bm;
+  const mult=v118ProfFactor()*v118Headroom()*v118AgeTraining();
+  // Rescale only positive development. Decline/other negative effects are left untouched.
+  if(dt>0)P.t=bt+dt*mult;if(dp>0)P.ph=bp+dp*mult;if(dm>0)P.m=bm+dm*mult;
+  // Training professionalism slowly affects manager trust independent of match minutes.
+  const trainingTrust=clamp((v118Professionalism()-50)/50*.22,-.22,.22);
+  P.trust=clamp(P.trust+trainingTrust,0,100);
+  // Confidence follows recent performance and selection, but remains temporary.
+  if(P.confidence==null)P.confidence=50;
+  const grade=Number(h?.grade||0),mins=Number(h?.mins||0);
+  const confDelta=mins>0&&grade?clamp((3.35-grade)*.75,-1.6,1.8):-.08;
+  P.confidence=clamp(P.confidence+confDelta,0,100);
+  h.professionalism=v118Professionalism();h.devHeadroom=v118Headroom();h.trainingMult=mult;h.effectiveAbility=v118EffectiveAbility();
+  if(S.delta){S.delta.ability=ability()-(bt*.42+bp*.25+bm*.33);S.delta.trust=P.trust-preTrust;}
+  return out;
+};
+
+// Selection uses effective ability: form/confidence/trust can make a player temporarily perform above potential.
+const _v118SelectionChance=selectionChance;
+selectionChance=function(c,r){
+  const res=_v118SelectionChance(c,r);
+  const baseA=ability(),eff=v118EffectiveAbility(),bonus=(eff-baseA)*.42;
+  res.effectiveAbility=eff;res.effectiveAbilityTerm=bonus;res.raw+=bonus;res.chance=clamp(res.raw,res.chance<4?res.chance:4,88);
+  return res;
+};
+
+function v118ApplySetup(){
+  const n=id=>Number(document.getElementById(id)?.value);
+  if(!P)return;
+  const vals={age:n('dbgAge'),t:n('dbgT'),ph:n('dbgPh'),m:n('dbgM'),pot:n('dbgPot'),professionalism:n('dbgProf'),form:n('dbgForm'),trust:n('dbgTrust'),confidence:n('dbgConf'),rep:n('dbgRep'),att:n('dbgAtt')};
+  if(Number.isFinite(vals.age))P.age=clamp(vals.age,15,40);
+  ['t','ph','m'].forEach(k=>{if(Number.isFinite(vals[k]))P[k]=clamp(vals[k],1,99)});
+  if(Number.isFinite(vals.pot))P.pot=clamp(vals.pot,ability(),99);
+  if(Number.isFinite(vals.professionalism))P.professionalism=clamp(vals.professionalism,1,100);
+  if(Number.isFinite(vals.form))P.form=clamp(vals.form,0,100);
+  if(Number.isFinite(vals.trust))P.trust=clamp(vals.trust,0,100);
+  if(Number.isFinite(vals.confidence))P.confidence=clamp(vals.confidence,0,100);
+  if(Number.isFinite(vals.rep))P.rep=clamp(vals.rep,0,100);
+  if(Number.isFinite(vals.att))P.att=clamp(vals.att,0,100);
+  // Rebuild perceptions because debug setup may materially change the player before testing.
+  if(S){S.perceptions={};initClubPerceptions();}
+  render();
+}
+
+const _v118Sign=sign;
+sign=function(i){
+  const out=_v118Sign(i);
+  if(P){if(P.professionalism==null)P.professionalism=clamp(50+rn()*15,15,95);if(P.confidence==null)P.confidence=50;}
+  render();return out;
+};
+
+const _v118Render=render;
+render=function(){
+  _v118Render();if(!P||!S)return;
+  const target=$('ratingsTab');if(!target)return;
+  const old=document.getElementById('v118Setup');if(old)old.remove();
+  const d=document.createElement('div');d.className='offer';d.id='v118Setup';
+  d.innerHTML='<div class="headline">Player Setup / DEBUG</div><p class="muted">Edit values to create controlled test careers. Overall ability remains calculated from Technical 42% + Physical 25% + Mental 33%.</p><div class="grid">'+
+    [['Age','dbgAge',P.age],['Technical','dbgT',P.t],['Physical','dbgPh',P.ph],['Mental','dbgM',P.m],['Potential','dbgPot',P.pot],['Professionalism','dbgProf',v118Professionalism()],['Form','dbgForm',P.form],['Trust','dbgTrust',P.trust],['Confidence','dbgConf',P.confidence??50],['Reputation','dbgRep',P.rep],['Attention','dbgAtt',P.att]].map(x=>'<label>'+x[0]+'<input id="'+x[1]+'" type="number" value="'+Number(x[2]).toFixed(0)+'"></label>').join('')+'</div><button onclick="v118ApplySetup()">Apply test values</button><p><b>Underlying ability:</b> '+ability().toFixed(1)+' · <b>Effective ability:</b> '+v118EffectiveAbility().toFixed(1)+' · <b>True potential DEBUG:</b> '+Number(P.pot).toFixed(1)+'</p>'+
+    '<p class="muted">Effective ability can temporarily exceed potential through form, confidence and manager trust. Permanent attributes still slow sharply near true potential.</p>';
+  target.appendChild(d);
+};
